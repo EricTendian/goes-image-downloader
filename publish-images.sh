@@ -1,33 +1,42 @@
 #!/bin/bash
+set -e
 
-export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+cd "$(dirname "$0")"
 
-#if network connectivity is full, perform all comands, else, don't.
-if [ $(nmcli networking connectivity) = 'full' ];
-
-then
-	echo "Updating Earthview..."
-
-	#rename old image and update background path
-	mv /home/jackson/Projects/goes-image-downloader/latest.jpg /home/jackson/Projects/goes-image-downloader/former.jpg
-
-	gsettings set org.gnome.desktop.background picture-uri file:////home/jackson/Projects/goes-image-downloader/former.jpg
-
-	#download image from https://www.star.nesdis.noaa.gov/GOES/fulldisk_band.php?sat=G16&band=GEOCOLOR&length=12
-	wget -nd -A.jpg https://cdn.star.nesdis.noaa.gov/GOES16/ABI/FD/GEOCOLOR/latest.jpg -O /home/jackson/Projects/goes-image-downloader/latest_unformatted.jpg
-
-	#resize new image
-	convert /home/jackson/Projects/goes-image-downloader/latest_unformatted.jpg -resize 1920x1080 -background black -gravity center -extent 1920x1080 /home/jackson/Projects/goes-image-downloader/latest.jpg
-
-	#delete unformatted image
-	rm /home/jackson/Projects/goes-image-downloader/latest_unformatted.jpg
-
-	#set new image as background
-	gsettings set org.gnome.desktop.background picture-uri file:////home/jackson/Projects/goes-image-downloader/latest.jpg
-
-	#delete former image
-	rm /home/jackson/Projects/goes-image-downloader/former.jpg
-
-else
-	echo "No internet connection..."
+# Don't bother downloading the image if we're not connected to the internet
+if ! ping -q -c 1 -W 1 google.com >/dev/null; then
+	exit 1
 fi
+
+export PATH="${PATH}:/opt/homebrew/bin"
+
+if ! command -v magick &> /dev/null; then
+	brew install imagemagick
+fi
+
+if ! command -v wallpaper &> /dev/null; then
+	brew install --build-from-source wallpaper
+fi
+
+CURRENT_DATETIME=$(date +"%Y%m%d%H%M")
+
+# Get the resolution of the display
+RESOLUTION_LINE=$(system_profiler SPDisplaysDataType | grep Resolution)
+X_RESOLUTION=$(echo ${RESOLUTION_LINE} | awk '{print $2}')
+Y_RESOLUTION=$(echo ${RESOLUTION_LINE} | awk '{print $4}')
+RESOLUTION="${X_RESOLUTION}x${Y_RESOLUTION}"
+
+# Download the latest image from NOAA
+curl -sSfL https://cdn.star.nesdis.noaa.gov/GOES16/ABI/FD/GEOCOLOR/latest.jpg | \
+# We need to resize the image to 90% of the height to make space for the menu bar/notch
+magick - \
+	-resize ${X_RESOLUTION}x$((${Y_RESOLUTION} * 90 / 100)) \
+	-background black \
+	-gravity center \
+	-extent ${RESOLUTION} \
+	${CURRENT_DATETIME}.jpg
+# Set the image as the wallpaper - we are using CURRENT_DATETIME so MacOS detects a change and updates the wallpaper
+wallpaper set ${CURRENT_DATETIME}.jpg --scale fit --fill-color 000000
+
+# Delete all images except the current one
+find . -type f -name '*.jpg' ! -name "${CURRENT_DATETIME}.jpg" -delete
